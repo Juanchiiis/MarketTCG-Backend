@@ -1,0 +1,6 @@
+@MarketGO_HostAddress = http://localhost:5297
+
+GET {{MarketGO_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###

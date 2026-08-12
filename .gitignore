@@ -1,0 +1,15 @@
+﻿## Ignore Visual Studio temporary files
+.vs/
+bin/
+obj/
+*.rsuser
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+[Dd]ebug/
+[Rr]elease/
+x64/
+x86/
+.idea/
+*.nupkg
