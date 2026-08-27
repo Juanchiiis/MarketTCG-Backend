@@ -24,27 +24,48 @@ namespace MarketGO.Controllers
         }
 
         //Endpoint GET : La ruta que REACT llamara para obtener la lista de usuarios
-        [Authorize (Roles = "Admin")]
+        [Authorize(Roles = "Admin")]
         [HttpGet]
         public async Task<IActionResult> GetUsuarios()
         {
             //Usamos .Select()  para transoformar cada entidad (con contraseña)
             //en un DTO (sin contraseña antes de mandarlo)
             var listaUsuarios = await _context.Usuarios.Select(usuariosBD => new UsuarioDTO
-                {
-                    Id = usuariosBD.Id,
-                    NombreUsuario = usuariosBD.NombreUsuario,
-                    Correo = usuariosBD.Correo,
-                    Rol = usuariosBD.Rol,
-                    FechaRegistro = usuariosBD.FechaRegistro
+            {
+                Id = usuariosBD.Id,
+                NombreUsuario = usuariosBD.NombreUsuario,
+                Correo = usuariosBD.Correo,
+                Rol = usuariosBD.Rol,
+                FechaRegistro = usuariosBD.FechaRegistro
                 //Como el DTO no tiene donde guardar la contraseña, simplemente no la extraemos de 'usuarioBD'.
             }
 
             ).ToListAsync();
             return Ok(listaUsuarios);
         }
-        //Enpoint Post : La ruta que seguira REACT para obtener la lista de usuarios
-        
+        // Endpoint GET: Para que React cargue los datos del perfil
+        [Authorize]
+        [HttpGet("{id}")]
+        public async Task<IActionResult> GetUsuarioPorId(int id)
+        {
+            var usuario = await _context.Usuarios.FindAsync(id);
+            if (usuario == null)
+            {
+                return NotFound(new { message = "Usuario no encontrado" });
+            }
+
+            // Devolvemos los datos mapeados al DTO (sin contraseña)
+            return Ok(new UsuarioDTO
+            {
+                Id = usuario.Id,
+                NombreUsuario = usuario.NombreUsuario,
+                Correo = usuario.Correo,
+                Rol = usuario.Rol,
+                FechaRegistro = usuario.FechaRegistro
+            });
+        }
+        //Enpoint Post : La ruta que seguira REACT para crear usuarios
+
         [HttpPost]
         public async Task<IActionResult> CrearUsuario(RegistroUsuarioDTO nuevoUsuario)
         {
@@ -59,7 +80,20 @@ namespace MarketGO.Controllers
                     Rol = "Cliente",
                     FechaRegistro = DateTime.Now //Se asigna la fecha actual al momento de crear el usuario
                 };
-                
+
+                //Verificamos si el correo o la contraseña ya existen en la base de datos.
+                bool userExitsEmail = await _context.Usuarios.AnyAsync(u => u.Correo == nuevoUsuario.Correo);
+                if (userExitsEmail)
+                {
+                    return BadRequest(new { message = "Ya existe este correo para un usuario, prueba con otro." });
+                }
+                // 2. Verificamos si el NOMBRE DE USUARIO ya existe (Esto evitaba que se guardara)
+                bool userExitsName = await _context.Usuarios.AnyAsync(u => u.NombreUsuario == nuevoUsuario.NombreUsuario);
+                if (userExitsName)
+                {
+                    return BadRequest(new { message = "Este nombre de usuario ya está en uso. Elige otro." });
+                }
+
                 _context.Usuarios.Add(nuevoUsuarioBD);
 
 

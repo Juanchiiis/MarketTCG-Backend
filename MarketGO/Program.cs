@@ -100,6 +100,9 @@ if (app.Environment.IsDevelopment())
 app.UseHttpsRedirection();
 
 app.UseRouting();
+//Habilita la carpeta de wwwroot para servir imagenes fisicas.
+app.UseStaticFiles();
+
 
 // 6. Encendemos el CORS usando el nombre exacto que le dimos arriba 
 // (Debe ir entre UseRouting y UseAuthorization)

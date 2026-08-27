@@ -10,10 +10,12 @@ namespace MarketGO.Models
 
         [Required(ErrorMessage = "El correo electronico es obigatorio.")]
         [EmailAddress(ErrorMessage = "El formato del correo no es válido.")]
+        
         public string Correo { get; set; } = string.Empty;
 
         [Required(ErrorMessage = "La contraseña es obligatoria.")]
         [StringLength(100, MinimumLength = 5, ErrorMessage = "La contraseña debe tener un minimo de 5 y un maximo de 100 caracteres.")]
+
         public string Password { get; set; } = string.Empty;
     }
 }

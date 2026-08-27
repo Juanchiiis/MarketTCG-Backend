@@ -18,8 +18,18 @@ namespace MarketGO.Models
         public DbSet<PublicacionInventario> Publicaciones_Inventarios { get; set; }
         public DbSet<Usuarios> Usuarios { get; set; }
 
+        protected override void OnModelCreating(ModelBuilder modelBuilder)
+        {
+            // Garantiza que a nivel de base de datos jamás se dupliquen
+            modelBuilder.Entity<Usuarios>()
+                .HasIndex(u => u.Correo)
+                .IsUnique();
+        }
+        // Nuevas Tablas agregadas.
+        public DbSet<Direccion> Direcciones { get; set; }
+        public DbSet<Pedido> Pedidos { get; set; }
 
-
+        public DbSet<DetallePedido> Detalles_Pedido { get; set; }
     }
 
 }

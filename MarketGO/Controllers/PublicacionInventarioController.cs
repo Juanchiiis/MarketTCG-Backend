@@ -40,7 +40,12 @@ namespace MarketGO.Controllers
                             select new PublicacionInventarioDTO
                             {
                                 Id = publicacion.Id,
+                                ProductoCatalogoId = publicacion.ProductoCatalogoId,
+                                ColeccionId = producto.ColeccionId,
+                                SKU = producto.SKU,
+                                TipoProducto = producto.TipoProducto,
                                 NombreProducto = producto.NombreProducto,
+                                ImagenUrl = producto.ImagenUrl,
                                 NombreVendedor = usuario.NombreUsuario,
                                 Estado = publicacion.Estado,
                                 Precio = publicacion.Precio,
@@ -51,7 +56,147 @@ namespace MarketGO.Controllers
             return Ok(listaPublicacionInventario);
         }
 
+        // Endpoint GET: Trae SOLO las publicaciones del usuario logueado
+        [Authorize]
+        [HttpGet("MisPublicaciones")]
+        public async Task<IActionResult> GetMisPublicaciones()
+        {
+            try
+            {
+                // 1. Sacamos la ID del token del usuario que inició sesión
+                var claimID = User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+                if (claimID == null) return Unauthorized(new { message = "Token inválido" });
 
+                int idUsuarioLogueado = int.Parse(claimID);
+
+                // 2. Hacemos el mismo JOIN de antes, pero filtramos por el VendedorId
+                var misPublicaciones = await (from publicacion in _context.Publicaciones_Inventarios
+                                              join producto in _context.Catalogo_Productos
+                                              on publicacion.ProductoCatalogoId equals producto.Id
+                                              join usuario in _context.Usuarios
+                                              on publicacion.VendedorId equals usuario.Id
+                                              where publicacion.VendedorId == idUsuarioLogueado // <-- EL FILTRO
+                                              select new PublicacionInventarioDTO
+                                              {
+                                                  Id = publicacion.Id,
+                                                  ProductoCatalogoId = publicacion.ProductoCatalogoId,
+                                                  ColeccionId = producto.ColeccionId,
+                                                  SKU = producto.SKU,
+                                                  TipoProducto = producto.TipoProducto,
+                                                  NombreProducto = producto.NombreProducto,
+                                                  ImagenUrl = producto.ImagenUrl,
+                                                  NombreVendedor = usuario.NombreUsuario,
+                                                  Estado = publicacion.Estado,
+                                                  Precio = publicacion.Precio,
+                                                  Notas = publicacion.Notas
+                                              }).ToListAsync();
+
+                return Ok(misPublicaciones);
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { message = "Error al obtener tus publicaciones", error = ex.Message });
+            }
+        }
+        // Endpoint GET: Buscador Avanzado con Filtros Dinámicos y Paginación
+        [HttpGet("buscar")]
+        public async Task<IActionResult> BuscarPublicaciones(
+            [FromQuery] string? nombre,
+            [FromQuery] string? franquicia,
+            [FromQuery] string? coleccion,
+            [FromQuery] decimal? precioMin,
+            [FromQuery] decimal? precioMax,
+            [FromQuery] int pagina = 1,
+            [FromQuery] int limite = 10)
+        {
+            try
+            {
+                // 1. Unimos las 5 tablas necesarias (Inventario, Producto, Coleccion, Franquicia, Usuario)
+                // Usamos AsQueryable() para no ejecutar la consulta todavía en la BD
+                var query = (from publicacion in _context.Publicaciones_Inventarios
+                             join producto in _context.Catalogo_Productos on publicacion.ProductoCatalogoId equals producto.Id
+                             join col in _context.Colecciones on producto.ColeccionId equals col.Id
+                             join franq in _context.Franquicias on col.FranquiciaId equals franq.Id
+                             join usuario in _context.Usuarios on publicacion.VendedorId equals usuario.Id
+                             where publicacion.Stock > 0 // Solo mostramos lo que se puede comprar
+                             select new
+                             {
+                                 publicacion,
+                                 producto,
+                                 col,
+                                 franq,
+                                 usuario
+                             }).AsQueryable();
+
+                // 2. Aplicamos filtros dinámicos solo si el frontend los envió
+                if (!string.IsNullOrWhiteSpace(nombre))
+                {
+                    query = query.Where(q => q.producto.NombreProducto.Contains(nombre));
+                }
+
+                if (!string.IsNullOrWhiteSpace(franquicia))
+                {
+                    query = query.Where(q => q.franq.Nombre.Contains(franquicia));
+                }
+
+                if (!string.IsNullOrWhiteSpace(coleccion))
+                {
+                    query = query.Where(q => q.col.NombreColeccion.Contains(coleccion));
+                }
+
+                if (precioMin.HasValue)
+                {
+                    query = query.Where(q => q.publicacion.Precio >= precioMin.Value);
+                }
+
+                if (precioMax.HasValue)
+                {
+                    query = query.Where(q => q.publicacion.Precio <= precioMax.Value);
+                }
+
+                // 3. Calculamos la paginación
+                int totalItems = await query.CountAsync(); // Cuenta cuántos resultados hay en total
+                int totalPaginas = (int)Math.Ceiling(totalItems / (double)limite);
+
+                // 4. Aplicamos el Skip, Take y armamos el DTO final
+                var resultados = await query
+                    .OrderByDescending(q => q.publicacion.Id) // Ordenar por los más nuevos
+                    .Skip((pagina - 1) * limite)
+                    .Take(limite)
+                    .Select(q => new PublicacionInventarioDTO
+                    {
+                        Id = q.publicacion.Id,
+                        ProductoCatalogoId = q.publicacion.ProductoCatalogoId,
+                        ColeccionId = q.producto.ColeccionId,
+                        SKU = q.producto.SKU,
+                        TipoProducto = q.producto.TipoProducto,
+                        NombreProducto = q.producto.NombreProducto,
+                        NombreColeccion = q.col.NombreColeccion, // Nuevo
+                        NombreFranquicia = q.franq.Nombre,       // Nuevo
+                        ImagenUrl = q.producto.ImagenUrl,
+                        NombreVendedor = q.usuario.NombreUsuario,
+                        Estado = q.publicacion.Estado,
+                        Precio = q.publicacion.Precio,
+                        Notas = q.publicacion.Notas
+                    })
+                    .ToListAsync(); // <-- ¡Aquí es donde C# finalmente viaja a SQL Server!
+
+                // 5. Envolvemos la respuesta para el Frontend
+                var respuesta = new RespuestaPaginadaDTO<PublicacionInventarioDTO>
+                {
+                    TotalItems = totalItems,
+                    TotalPaginas = totalPaginas,
+                    PaginaActual = pagina,
+                    Items = resultados
+                };
+
+                return Ok(respuesta);
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { message = "Error al buscar productos", error = ex.Message });
+            }
+        }
 
         //Endpoint Post : La ruta que REACT llamara para crear lista de publicaciones de inventario
         [Authorize]
