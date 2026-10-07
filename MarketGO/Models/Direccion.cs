@@ -13,6 +13,8 @@ namespace MarketGO.Models
         public string Calle { get; set; } = string.Empty;
         public string Numero { get; set; } = string.Empty;
         public string? Departamento { get; set; }
+        public string? Label { get; set; }
+        public string? CodigoPostal { get; set; } = string.Empty;
         public bool EsPredeterminada { get; set; }
     }
 }

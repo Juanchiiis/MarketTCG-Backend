@@ -12,5 +12,8 @@ namespace MarketGO.Models
         public decimal Precio { get; set; }
         public int Stock { get; set; }
         public string Notas { get; set; } = string.Empty;
+
+        [ForeignKey("ProductoCatalogoId")]
+        public virtual CatalogoProducto ProductoCatalogo { get; set; }
     }
 }

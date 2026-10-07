@@ -10,9 +10,13 @@ namespace MarketGO.Models
         public int Id { get; set; }
         public int PedidoId { get; set; }
         public int PublicacionId { get; set; }
+       
         public int Cantidad { get; set; }
 
         [Column(TypeName = "decimal(18,2)")]
         public decimal PrecioUnitario { get; set; }
+
+        [ForeignKey("PublicacionId")]
+        public virtual PublicacionInventario Publicacion { get; set; } 
     }
 }

@@ -16,6 +16,12 @@ namespace MarketGO.Models
         [Required(ErrorMessage = "El número es obligatorio.")]
         public string Numero { get; set; } = string.Empty;
 
+        public string CodigoPostal { get; set; } = string.Empty;
+
+        public string Label { get; set; }
+
         public string? Departamento { get; set; }
+
+        public bool EsPredeterminada { get; set; }
     }
 }

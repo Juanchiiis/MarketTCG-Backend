@@ -119,7 +119,10 @@ namespace MarketGO.Controllers
 
             // Buscamos los pedidos del usuario, ordenados desde el más reciente al más antiguo
             var misPedidos = await _context.Pedidos
-                .Include(p => p.Detalles)
+                .Include(p => p.Direccion)
+                .Include(p => p.articulos)
+                    .ThenInclude(d => d.Publicacion)
+                    .ThenInclude(pub => pub.ProductoCatalogo)
                 .Where(p => p.UsuarioId == userIdToken)
                 .OrderByDescending(p => p.FechaPedido)
                 .ToListAsync();

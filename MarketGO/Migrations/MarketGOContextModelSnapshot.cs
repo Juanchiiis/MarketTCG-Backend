@@ -82,6 +82,81 @@ namespace MarketGO.Migrations
                     b.ToTable("Colecciones");
                 });
 
+            modelBuilder.Entity("MarketGO.Models.DetallePedido", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("int");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("Id"));
+
+                    b.Property<int>("Cantidad")
+                        .HasColumnType("int");
+
+                    b.Property<int>("PedidoId")
+                        .HasColumnType("int");
+
+                    b.Property<decimal>("PrecioUnitario")
+                        .HasColumnType("decimal(18,2)");
+
+                    b.Property<int>("PublicacionId")
+                        .HasColumnType("int");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("PedidoId");
+
+                    b.HasIndex("PublicacionId");
+
+                    b.ToTable("Detalles_Pedido");
+                });
+
+            modelBuilder.Entity("MarketGO.Models.Direccion", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("int");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("Id"));
+
+                    b.Property<string>("Calle")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("CodigoPostal")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("Comuna")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("Departamento")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<bool>("EsPredeterminada")
+                        .HasColumnType("bit");
+
+                    b.Property<string>("Label")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("Numero")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("Region")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<int>("UsuarioId")
+                        .HasColumnType("int");
+
+                    b.HasKey("Id");
+
+                    b.ToTable("Direcciones");
+                });
+
             modelBuilder.Entity("MarketGO.Models.Franquicias", b =>
                 {
                     b.Property<int>("Id")
@@ -97,6 +172,37 @@ namespace MarketGO.Migrations
                     b.HasKey("Id");
 
                     b.ToTable("Franquicias");
+                });
+
+            modelBuilder.Entity("MarketGO.Models.Pedido", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("int");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("Id"));
+
+                    b.Property<int>("DireccionId")
+                        .HasColumnType("int");
+
+                    b.Property<string>("Estado")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<DateTime>("FechaPedido")
+                        .HasColumnType("datetime2");
+
+                    b.Property<decimal>("Total")
+                        .HasColumnType("decimal(18,2)");
+
+                    b.Property<int>("UsuarioId")
+                        .HasColumnType("int");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("DireccionId");
+
+                    b.ToTable("Pedidos");
                 });
 
             modelBuilder.Entity("MarketGO.Models.PublicacionInventario", b =>
@@ -129,6 +235,8 @@ namespace MarketGO.Migrations
 
                     b.HasKey("Id");
 
+                    b.HasIndex("ProductoCatalogoId");
+
                     b.ToTable("Publicaciones_Inventario");
                 });
 
@@ -142,7 +250,7 @@ namespace MarketGO.Migrations
 
                     b.Property<string>("Correo")
                         .IsRequired()
-                        .HasColumnType("nvarchar(max)");
+                        .HasColumnType("nvarchar(450)");
 
                     b.Property<DateTime>("FechaRegistro")
                         .HasColumnType("datetime2");
@@ -161,6 +269,9 @@ namespace MarketGO.Migrations
 
                     b.HasKey("Id");
 
+                    b.HasIndex("Correo")
+                        .IsUnique();
+
                     b.ToTable("Usuarios");
                 });
 
@@ -173,6 +284,50 @@ namespace MarketGO.Migrations
                         .IsRequired();
 
                     b.Navigation("Usuario");
+                });
+
+            modelBuilder.Entity("MarketGO.Models.DetallePedido", b =>
+                {
+                    b.HasOne("MarketGO.Models.Pedido", null)
+                        .WithMany("articulos")
+                        .HasForeignKey("PedidoId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("MarketGO.Models.PublicacionInventario", "Publicacion")
+                        .WithMany()
+                        .HasForeignKey("PublicacionId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Publicacion");
+                });
+
+            modelBuilder.Entity("MarketGO.Models.Pedido", b =>
+                {
+                    b.HasOne("MarketGO.Models.Direccion", "Direccion")
+                        .WithMany()
+                        .HasForeignKey("DireccionId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Direccion");
+                });
+
+            modelBuilder.Entity("MarketGO.Models.PublicacionInventario", b =>
+                {
+                    b.HasOne("MarketGO.Models.CatalogoProducto", "ProductoCatalogo")
+                        .WithMany()
+                        .HasForeignKey("ProductoCatalogoId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("ProductoCatalogo");
+                });
+
+            modelBuilder.Entity("MarketGO.Models.Pedido", b =>
+                {
+                    b.Navigation("articulos");
                 });
 #pragma warning restore 612, 618
         }

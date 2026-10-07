@@ -9,11 +9,12 @@ namespace MarketGO.Models
         public int Id { get; set; }
         public int UsuarioId { get; set; }
         public int DireccionId { get; set; }
+        public virtual Direccion Direccion { get; set; }
         public DateTime FechaPedido { get; set; } = DateTime.Now;
 
         [Column(TypeName = "decimal(18,2)")]
         public decimal Total { get; set; }
         public string Estado { get; set; } = "Pendiente";
-        public virtual ICollection<DetallePedido> Detalles { get; set; } = new List<DetallePedido>();
+        public virtual ICollection<DetallePedido> articulos { get; set; } = new List<DetallePedido>();
     }
 }

@@ -1,3 +1,4 @@
+using Scalar.AspNetCore; // <-- Agrega esta línea
 using MarketGO.Models;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.EntityFrameworkCore;
@@ -9,7 +10,11 @@ using System.Text;
 var builder = WebApplication.CreateBuilder(args);
 
 // 1. Agregar los controladores al servidor
-builder.Services.AddControllers();
+builder.Services.AddControllers().AddJsonOptions(options =>
+{
+    // Esto obliga a C# a enviar toda la info (Imágenes, Títulos) sin crashear por bucles
+    options.JsonSerializerOptions.ReferenceHandler = System.Text.Json.Serialization.ReferenceHandler.IgnoreCycles;
+});
 
 // 2. Registrar el DbContext y decirle que use SQL Server con la conexión del appsettings
 builder.Services.AddDbContext<MarketGOContext>(options =>
@@ -95,6 +100,13 @@ if (app.Environment.IsDevelopment())
 {
     app.UseSwagger();
     app.UseSwaggerUI();
+    app.MapScalarApiReference(options =>
+    {
+        options.WithTitle("MarketGO API");
+        options.WithTheme(ScalarTheme.DeepSpace); // Puedes cambiarlo a Mars, Moon, BluePlanet, etc.
+        options.WithDefaultHttpClient(ScalarTarget.JavaScript, ScalarClient.Fetch); // Ideal para tu compañero de React
+        options.WithOpenApiRoutePattern("/swagger/{documentName}/swagger.json");
+    });
 }
 
 app.UseHttpsRedirection();
@@ -112,6 +124,7 @@ app.UseAuthentication(); // <-- ESTE ES EL NUEVO (Verifica quién eres)
 app.UseAuthorization();
 
 app.MapControllers();
+
 
 // 7. Arrancar el servidor (Solo debe existir un app.Run y siempre va al final)
 app.Run();
