@@ -5,10 +5,9 @@ namespace MarketGO.Models
 {
     public class ProductoCreacionDTO
     {
-        //Validamos que envíen un ID válido de colección (mayor a 0)
+        //Validamos que envíen un ID válido de colección
         [Required(ErrorMessage = "Debes seleccionar a qué colección pertenece el producto.")]
-        [Range(1, int.MaxValue, ErrorMessage = "La id de colección no es válida.")]
-        public int ColeccionId { get; set; }
+        public string ColeccionId { get; set; } = string.Empty;
 
         [Required(ErrorMessage = "El nombre del producto es obligatorio.")]
         [StringLength(100, MinimumLength = 5, ErrorMessage = "El nombre debe tener entre 5 a 100 caracteres.")]

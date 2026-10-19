@@ -5,8 +5,7 @@ namespace MarketGO.Models
     public class ColeccionCreacionDTO
     {
         [Required(ErrorMessage = " Debes seleccionar a que franquicia pertenece la colección.")]
-        [Range(1, int.MaxValue, ErrorMessage = "La id de franquicia no es valida.")]
-        public int FranquiciaId { get; set; }
+        public string FranquiciaId { get; set; } = string.Empty;
 
         [Required (ErrorMessage = "El campo de Nombre de la colección no puede estar vacio")]
         [StringLength (150, MinimumLength = 8, ErrorMessage = "El campo de nombre de coleccion debe tener un minimo de 8 y un maximo de 150 caracteres.")]

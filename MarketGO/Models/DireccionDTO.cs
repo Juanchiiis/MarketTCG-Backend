@@ -1,9 +1,12 @@
-﻿using System.ComponentModel.DataAnnotations;
+using System.ComponentModel.DataAnnotations;
 
 namespace MarketGO.Models
 {
     public class DireccionDTO
     {
+        public string Id { get; set; } = string.Empty;
+        public string UsuarioId { get; set; } = string.Empty;
+
         [Required(ErrorMessage = "La región es obligatoria.")]
         public string Region { get; set; } = string.Empty;
 

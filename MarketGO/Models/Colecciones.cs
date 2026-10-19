@@ -1,13 +1,20 @@
-﻿using System.ComponentModel.DataAnnotations.Schema;
+using System.ComponentModel.DataAnnotations.Schema;
+using MongoDB.Bson;
+using MongoDB.Bson.Serialization.Attributes;
 
 namespace MarketGO.Models
 {
     [Table("Colecciones")]
     public class Colecciones
     {
-        public int Id { get; set; }
-        public int FranquiciaId { get; set; }
+        [BsonId]
+        [BsonRepresentation(BsonType.ObjectId)]
+        public string Id { get; set; } = string.Empty;
+
+        [BsonRepresentation(BsonType.ObjectId)]
+        public string FranquiciaId { get; set; } = string.Empty;
         public string NombreColeccion { get; set; } = string.Empty;
-        public int AnioLanzamiento { get; set; } 
+        public string NombreFranquicia { get; set; } = string.Empty;
+        public int AnioLanzamiento { get; set; }
     }
 }

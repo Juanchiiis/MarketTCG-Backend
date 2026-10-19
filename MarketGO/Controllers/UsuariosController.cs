@@ -1,7 +1,7 @@
 ﻿using MarketGO.Models;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.EntityFrameworkCore;
+using MongoDB.Driver;
 using Microsoft.IdentityModel.Tokens;
 using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
@@ -13,128 +13,102 @@ namespace MarketGO.Controllers
     [ApiController]
     public class UsuariosController : ControllerBase
     {
-        private readonly MarketGOContext _context;
-        private readonly IConfiguration _config; 
+        private readonly IMongoCollection<Usuarios> _usuariosCollection;
+        private readonly IConfiguration _config;
 
-        //El constructor recibe el contexto de la base de datos para poder usarlo en los métodos
-        public UsuariosController(MarketGOContext context, IConfiguration config)
+        public UsuariosController(IMongoDatabase database, IConfiguration config)
         {
-            _context = context;
+            _usuariosCollection = database.GetCollection<Usuarios>("usuarios");
             _config = config;
         }
 
-        //Endpoint GET : La ruta que REACT llamara para obtener la lista de usuarios
         [Authorize(Roles = "Admin")]
         [HttpGet]
         public async Task<IActionResult> GetUsuarios()
         {
-            //Usamos .Select()  para transoformar cada entidad (con contraseña)
-            //en un DTO (sin contraseña antes de mandarlo)
-            var listaUsuarios = await _context.Usuarios.Select(usuariosBD => new UsuarioDTO
-            {
-                Id = usuariosBD.Id,
-                NombreUsuario = usuariosBD.NombreUsuario,
-                Correo = usuariosBD.Correo,
-                Rol = usuariosBD.Rol,
-                FechaRegistro = usuariosBD.FechaRegistro
-                //Como el DTO no tiene donde guardar la contraseña, simplemente no la extraemos de 'usuarioBD'.
-            }
-
-            ).ToListAsync();
+            var listaUsuarios = await _usuariosCollection
+                .Find(Builders<Usuarios>.Filter.Empty)
+                .Project(u => new
+                {
+                    u.Id,
+                    u.NombreUsuario,
+                    u.Correo,
+                    u.Rol,
+                    u.AvatarUrl,
+                    u.FechaRegistro
+                })
+                .ToListAsync();
             return Ok(listaUsuarios);
         }
-        // Endpoint GET: Para que React cargue los datos del perfil
+
         [Authorize]
         [HttpGet("{id}")]
-        public async Task<IActionResult> GetUsuarioPorId(int id)
+        public async Task<IActionResult> GetUsuarioPorId(string id)
         {
-            var usuario = await _context.Usuarios.FindAsync(id);
-            if (usuario == null)
-            {
-                return NotFound(new { message = "Usuario no encontrado" });
-            }
+            var usuario = await _usuariosCollection.Find(u => u.Id == id).FirstOrDefaultAsync();
 
-            // Devolvemos los datos mapeados al DTO (sin contraseña)
-            return Ok(new UsuarioDTO
+            if (usuario == null) return NotFound(new { message = "Usuario no encontrado" });
+
+            return Ok(new
             {
-                Id = usuario.Id,
-                NombreUsuario = usuario.NombreUsuario,
-                Correo = usuario.Correo,
-                Rol = usuario.Rol,
-                FechaRegistro = usuario.FechaRegistro
+                usuario.Id,
+                usuario.NombreUsuario,
+                usuario.Correo,
+                usuario.Rol,
+                usuario.AvatarUrl,
+                usuario.Favoritos,
+                usuario.FechaRegistro
             });
         }
-        //Enpoint Post : La ruta que seguira REACT para crear usuarios
 
         [HttpPost]
         public async Task<IActionResult> CrearUsuario(RegistroUsuarioDTO nuevoUsuario)
         {
             try
             {
+                var usuarioConEmail = await _usuariosCollection.Find(u => u.Correo == nuevoUsuario.Correo).FirstOrDefaultAsync();
+                if (usuarioConEmail != null) return BadRequest(new { message = "Ya existe este correo para un usuario, prueba con otro." });
+
+                var usuarioConNombre = await _usuariosCollection.Find(u => u.NombreUsuario == nuevoUsuario.NombreUsuario).FirstOrDefaultAsync();
+                if (usuarioConNombre != null) return BadRequest(new { message = "Este nombre de usuario ya está en uso. Elige otro." });
+
                 var nuevoUsuarioBD = new Usuarios
                 {
                     NombreUsuario = nuevoUsuario.NombreUsuario,
                     Correo = nuevoUsuario.Correo,
-                    //toma la clave del DTO y la guarda en el hash de la base de datos
                     PasswordHash = BCrypt.Net.BCrypt.HashPassword(nuevoUsuario.Password),
                     Rol = "Cliente",
-                    FechaRegistro = DateTime.Now //Se asigna la fecha actual al momento de crear el usuario
+                    AvatarUrl = "",
+                    Favoritos = new List<string>(),
+                    FechaRegistro = DateTime.Now
                 };
 
-                //Verificamos si el correo o la contraseña ya existen en la base de datos.
-                bool userExitsEmail = await _context.Usuarios.AnyAsync(u => u.Correo == nuevoUsuario.Correo);
-                if (userExitsEmail)
-                {
-                    return BadRequest(new { message = "Ya existe este correo para un usuario, prueba con otro." });
-                }
-                // 2. Verificamos si el NOMBRE DE USUARIO ya existe (Esto evitaba que se guardara)
-                bool userExitsName = await _context.Usuarios.AnyAsync(u => u.NombreUsuario == nuevoUsuario.NombreUsuario);
-                if (userExitsName)
-                {
-                    return BadRequest(new { message = "Este nombre de usuario ya está en uso. Elige otro." });
-                }
-
-                _context.Usuarios.Add(nuevoUsuarioBD);
-
-
-                //Guarda el nuevo usuario en la base de datos
-                await _context.SaveChangesAsync();
+                await _usuariosCollection.InsertOneAsync(nuevoUsuarioBD);
                 return Ok(new { message = "El Usuario fue creado con exito", id = nuevoUsuarioBD.Id });
             }
-            catch(Exception ex)
+            catch (Exception ex)
             {
                 return BadRequest(new { message = "Ocurrio un error al crear el usuario", error = ex.Message });
             }
         }
 
-        //Endpoint LOGIN Crear Credencial
-        
-        [HttpPost("login")] //La ruta es /api/Usuarios/login
+        [HttpPost("login")]
         public async Task<IActionResult> Login(LoginDTO credenciales)
         {
-            //1. Buscamos si el correo existe en la base de datos
-            var usuarioEncontrado = await _context.Usuarios.FirstOrDefaultAsync(u => u.Correo == credenciales.Correo);
-            if (usuarioEncontrado == null)
-            {
-                return BadRequest(new { message = "El correo o contraseña son incorrectas." });
-            }
-            //2. Comparamos la contraseña escrita con el Hash
+            var usuarioEncontrado = await _usuariosCollection.Find(u => u.Correo == credenciales.Correo).FirstOrDefaultAsync();
+            if (usuarioEncontrado == null) return BadRequest(new { message = "El correo o contraseña son incorrectas." });
+
             bool passwordValida = BCrypt.Net.BCrypt.Verify(credenciales.Password, usuarioEncontrado.PasswordHash);
-            
-            if (!passwordValida)
-            {
-                return BadRequest(new { message = "Correo o contraseña incorrectas." });
-            }
+            if (!passwordValida) return BadRequest(new { message = "Correo o contraseña incorrectas." });
 
             var misCredenciales = new List<Claim>
             {
-                new Claim(ClaimTypes.NameIdentifier, usuarioEncontrado.Id.ToString()),
+                new Claim(ClaimTypes.NameIdentifier, usuarioEncontrado.Id),
                 new Claim(ClaimTypes.Name, usuarioEncontrado.NombreUsuario),
                 new Claim(ClaimTypes.Role, usuarioEncontrado.Rol ?? "Cliente")
             };
 
-            var stringKey = _config["Jwt:Key"];
-            var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(stringKey));
+            var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(_config["Jwt:Key"]));
             var creds = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
 
             var tokenDescriptor = new SecurityTokenDescriptor
@@ -146,106 +120,89 @@ namespace MarketGO.Controllers
                 SigningCredentials = creds
             };
 
-            // 6. El manejador escribe el token final en un string largo
             var tokenHandler = new JwtSecurityTokenHandler();
-            var tokenObjeto = tokenHandler.CreateToken(tokenDescriptor);
-            string tokenString = tokenHandler.WriteToken(tokenObjeto);
+            var tokenString = tokenHandler.WriteToken(tokenHandler.CreateToken(tokenDescriptor));
 
-            // 7. Le respondemos a React con el Token de acceso y los datos básicos
             return Ok(new
             {
                 token = tokenString,
-                usuario = new { usuarioEncontrado.Id, usuarioEncontrado.NombreUsuario, usuarioEncontrado.Rol }
+                usuario = new
+                {
+                    usuarioEncontrado.Id,
+                    usuarioEncontrado.NombreUsuario,
+                    usuarioEncontrado.Rol,
+                    usuarioEncontrado.AvatarUrl
+                }
             });
         }
 
-
-        //Enpoint PUT: La ruta que seguira REACT para editar la lista de usuarios
         [Authorize]
         [HttpPut("{id}")]
-        public async Task<IActionResult> EditarUsuario(int id, UsuarioEdicionDTO usuarioEditado)
+        public async Task<IActionResult> EditarUsuario(string id, UsuarioEdicionDTO usuarioEditado)
         {
-            //Extraerdatos para verificar que el id de usuario y lograr editar el usuario}
-            var userIdString = User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+            var userIdToken = User.FindFirstValue(ClaimTypes.NameIdentifier);
+            if (string.IsNullOrEmpty(userIdToken)) return Unauthorized(new { message = "Token invalido" });
 
-            if(!int.TryParse(userIdString, out int userIdToken))
+            var filter = Builders<Usuarios>.Filter.Eq(u => u.Id, id);
+            var ExisteUsuario = await _usuariosCollection.Find(filter).FirstOrDefaultAsync();
+
+            if (ExisteUsuario == null) return NotFound(new { message = "No se encontro el Usuario" });
+            if (ExisteUsuario.Id != userIdToken && !User.IsInRole("Admin")) return StatusCode(403, new { message = "No tienes permiso para editar este usuario" });
+
+            var update = Builders<Usuarios>.Update
+                .Set(u => u.NombreUsuario, usuarioEditado.NombreUsuario)
+                .Set(u => u.Correo, usuarioEditado.Correo);
+
+            // Si el DTO incluye AvatarUrl, se actualiza (asegúrate de agregar AvatarUrl a tu UsuarioEdicionDTO en C#)
+            if (!string.IsNullOrEmpty(usuarioEditado.AvatarUrl))
             {
-                return Unauthorized(new { message = "Token invalido " });
+                update = update.Set(u => u.AvatarUrl, usuarioEditado.AvatarUrl);
             }
 
-            //Preguntamos si la id es mayor a 0
-            if (id <= 0)
-            {
-                return BadRequest(new { message = "La ID es invalida" });
-            }
-            try
-            {
-
-
-                //Preguntamos si el id existe en la base de datos
-                var ExisteUsuario = await _context.Usuarios.FindAsync(id);
-                if (ExisteUsuario == null)
-                {
-                    return NotFound(new { message = "No se encontro el Usuario en la base de datos", id = id });
-                }
-
-                //Control de propiedad(OWNERSHIP)
-                //Comparacion el dueño de la cuenta con el token
-                if (ExisteUsuario.Id != userIdToken && !User.IsInRole("Admin"))
-                {
-                    return StatusCode(403, new { message = "No tienes permiso para editar este usuario" });
-                }
-
-                //Actualizamos solo la informacion segura mandada desde el dto
-                ExisteUsuario.NombreUsuario = usuarioEditado.NombreUsuario;
-                ExisteUsuario.Correo = usuarioEditado.Correo;
-
-
-
-                await _context.SaveChangesAsync();
-
-                return Ok(new { message = "El usuario fue editado con exito " });
-            }
-            catch (Exception ex)
-            {
-                return StatusCode(500, new { message = "Ocurrio un error al editar el usuario", error = ex.Message });
-            }
+            await _usuariosCollection.UpdateOneAsync(filter, update);
+            return Ok(new { message = "El usuario fue editado con exito" });
         }
 
-        //Endpoint Delete : Ruta que seguira REACT para eliminar el usuario
+        // NUEVO: Endpoint para alternar favoritos
+        [Authorize]
+        [HttpPost("{id}/favoritos/{publicacionId}")]
+        public async Task<IActionResult> ToggleFavorito(string id, string publicacionId)
+        {
+            var userIdToken = User.FindFirstValue(ClaimTypes.NameIdentifier);
+            if (id != userIdToken) return StatusCode(403, new { message = "Acceso denegado" });
+
+            var usuario = await _usuariosCollection.Find(u => u.Id == id).FirstOrDefaultAsync();
+            if (usuario == null) return NotFound();
+
+            var favoritos = usuario.Favoritos ?? new List<string>();
+            if (favoritos.Contains(publicacionId))
+            {
+                favoritos.Remove(publicacionId);
+            }
+            else
+            {
+                favoritos.Add(publicacionId);
+            }
+
+            var update = Builders<Usuarios>.Update.Set(u => u.Favoritos, favoritos);
+            await _usuariosCollection.UpdateOneAsync(u => u.Id == id, update);
+
+            return Ok(new { message = "Favoritos actualizados", favoritos });
+        }
+
         [Authorize(Roles = "Admin")]
         [HttpDelete("{id}")]
-        public async Task<IActionResult> BorrarUsuario(int id)
+        public async Task<IActionResult> BorrarUsuario(string id)
         {
-            var userIdString = User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
-            int userIdToken = 0;
-            try
-            {
-                //Validamos si el id de usuario es mayoe a 0
-                if (!int.TryParse(userIdString, out userIdToken))
-                {
-                    return Unauthorized(new { message = "La id de usuario no fue encontrada"});
-                }
-                //Validamos si el id de usuario existe en la base de datos
-                var ExisteUsuario = await _context.Usuarios.FindAsync(id);
-                if (ExisteUsuario == null)
-                {
-                    return NotFound(new { message = "El usuario no fue encontrado en la base de datos", id = id });
-                }
-                if (id == userIdToken)
-                {
-                    return BadRequest(new { message = "No puedes eliminar tu propia cuenta de administrador." });
-                }
+            var userIdToken = User.FindFirstValue(ClaimTypes.NameIdentifier);
+            if (id == userIdToken) return BadRequest(new { message = "No puedes eliminar tu propia cuenta de administrador." });
 
-                _context.Usuarios.Remove(ExisteUsuario);
+            var filter = Builders<Usuarios>.Filter.Eq(u => u.Id, id);
+            var result = await _usuariosCollection.DeleteOneAsync(filter);
 
-                await _context.SaveChangesAsync();
+            if (result.DeletedCount == 0) return NotFound(new { message = "El usuario no fue encontrado" });
 
-                return Ok(new { message = "El Usuario ha sido eliminado!!" });
-            } catch (Exception ex)
-            {
-                return BadRequest(new { message = "Ocurrio un error al eliminar el usuario", error = ex.Message });          
-            }
+            return Ok(new { message = "El Usuario ha sido eliminado" });
         }
     }
 }

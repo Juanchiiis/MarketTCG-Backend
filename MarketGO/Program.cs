@@ -1,31 +1,33 @@
-using Scalar.AspNetCore; // <-- Agrega esta línea
+using Scalar.AspNetCore;
 using MarketGO.Models;
+using MongoDB.Driver;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
-using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
-using Microsoft.OpenApi;
 using Microsoft.OpenApi.Models;
 using System.Text;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// 1. Agregar los controladores al servidor
+// 1. Agregar los controladores al servidor y evitar ciclos en JSON
 builder.Services.AddControllers().AddJsonOptions(options =>
 {
-    // Esto obliga a C# a enviar toda la info (Imágenes, Títulos) sin crashear por bucles
     options.JsonSerializerOptions.ReferenceHandler = System.Text.Json.Serialization.ReferenceHandler.IgnoreCycles;
 });
 
-// 2. Registrar el DbContext y decirle que use SQL Server con la conexión del appsettings
-builder.Services.AddDbContext<MarketGOContext>(options =>
-    options.UseSqlServer(builder.Configuration.GetConnectionString("ConexionSQL")));
+// 2. Leer la configuración de MongoDB y registrar el Cliente/Base de Datos (Reemplaza a SQL Server)
+var mongoConnectionString = builder.Configuration.GetSection("MongoDbSettings:ConnectionString").Value;
+var mongoDatabaseName = builder.Configuration.GetSection("MongoDbSettings:DatabaseName").Value;
 
-// 3. Agregar los servicios necesarios para que Swagger funcione
+builder.Services.AddSingleton<IMongoClient>(new MongoClient(mongoConnectionString));
+builder.Services.AddScoped<IMongoDatabase>(provider => {
+    var client = provider.GetRequiredService<IMongoClient>();
+    return client.GetDatabase(mongoDatabaseName);
+});
+
+// 3. Agregar los servicios necesarios para que Swagger funcione con JWT
 builder.Services.AddEndpointsApiExplorer();
-
 builder.Services.AddSwaggerGen(options =>
 {
-    // Le decimos a Swagger que vamos a usar tokens tipo Bearer (JWT)
     options.AddSecurityDefinition("Bearer", new OpenApiSecurityScheme
     {
         Name = "Authorization",
@@ -36,7 +38,6 @@ builder.Services.AddSwaggerGen(options =>
         Description = "Ingresa el token JWT aquí.\r\n\r\nFormato: 'Bearer [espacio] [tu_token]'\r\nEjemplo: 'Bearer eyJhbGciOiJIUzI1Ni...'"
     });
 
-    // Le decimos a Swagger que aplique este candado a todos los endpoints
     options.AddSecurityRequirement(new OpenApiSecurityRequirement
     {
         {
@@ -48,24 +49,23 @@ builder.Services.AddSwaggerGen(options =>
                     Id = "Bearer"
                 }
             },
-            new string[] {} // No se requieren scopes adicionales
+            new string[] {}
         }
     });
 });
 
-// 4. Configuramos las politicas de Cors para permitir que el frontend (que corre en otro puerto) pueda hacer peticiones a este backend
+// 4. Configuramos las políticas de Cors
 builder.Services.AddCors(options =>
 {
     options.AddPolicy("PermitirFrontend", policy =>
     {
-        // Cambiamos WithOrigins por AllowAnyOrigin temporalmente
         policy.AllowAnyOrigin()
               .AllowAnyHeader()
               .AllowAnyMethod();
     });
 });
 
-// --- INICIO CONFIGURACIÓN JWT ---
+// 5. CONFIGURACIÓN JWT
 builder.Services.AddAuthentication(options =>
 {
     options.DefaultAuthenticateScheme = JwtBearerDefaults.AuthenticationScheme;
@@ -79,23 +79,20 @@ builder.Services.AddAuthentication(options =>
         ValidateAudience = true,
         ValidateLifetime = true,
         ValidateIssuerSigningKey = true,
-        // Aquí C# va a tu appsettings.json a sacar los datos:
         ValidIssuer = builder.Configuration["Jwt:Issuer"],
         ValidAudience = builder.Configuration["Jwt:Audience"],
         IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(builder.Configuration["Jwt:Key"]))
     };
 });
-// --- FIN CONFIGURACIÓN JWT ---
 
-// Aquí debería estar tu línea original: var app = builder.Build();
-
+// 6. Construir la aplicación (Solo debe llamarse una vez)
 var app = builder.Build();
 
 // ==========================================
 // ZONA DE MIDDLEWARES (El orden es estricto)
 // ==========================================
 
-// 5. Configurar la interfaz gráfica de Swagger (solo para cuando estás desarrollando)
+// Configurar la interfaz gráfica de Swagger y Scalar
 if (app.Environment.IsDevelopment())
 {
     app.UseSwagger();
@@ -103,29 +100,23 @@ if (app.Environment.IsDevelopment())
     app.MapScalarApiReference(options =>
     {
         options.WithTitle("MarketGO API");
-        options.WithTheme(ScalarTheme.DeepSpace); // Puedes cambiarlo a Mars, Moon, BluePlanet, etc.
-        options.WithDefaultHttpClient(ScalarTarget.JavaScript, ScalarClient.Fetch); // Ideal para tu compañero de React
+        options.WithTheme(ScalarTheme.DeepSpace);
+        options.WithDefaultHttpClient(ScalarTarget.JavaScript, ScalarClient.Fetch);
         options.WithOpenApiRoutePattern("/swagger/{documentName}/swagger.json");
     });
 }
 
 app.UseHttpsRedirection();
-
 app.UseRouting();
-//Habilita la carpeta de wwwroot para servir imagenes fisicas.
 app.UseStaticFiles();
 
-
-// 6. Encendemos el CORS usando el nombre exacto que le dimos arriba 
-// (Debe ir entre UseRouting y UseAuthorization)
+// Encendemos el CORS (Debe ir entre UseRouting y UseAuthentication)
 app.UseCors("PermitirFrontend");
 
-app.UseAuthentication(); // <-- ESTE ES EL NUEVO (Verifica quién eres)
+app.UseAuthentication();
 app.UseAuthorization();
 
 app.MapControllers();
 
-
-// 7. Arrancar el servidor (Solo debe existir un app.Run y siempre va al final)
+// 7. Arrancar el servidor
 app.Run();
-

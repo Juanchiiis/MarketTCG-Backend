@@ -5,7 +5,7 @@ namespace MarketGO.Models
 {
     public class UsuarioDTO
     {
-        public int Id { get; set; }
+        public string Id { get; set; } = string.Empty;
         public string NombreUsuario { get; set; } = string.Empty;
         public string Correo { get; set; } = string.Empty;
         public DateTime FechaRegistro { get; set; }

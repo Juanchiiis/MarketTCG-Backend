@@ -1,81 +1,67 @@
 ﻿using MarketGO.Models;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.EntityFrameworkCore;
+using MongoDB.Driver;
 using System.Security.Claims;
 
 namespace MarketGO.Controllers
 {
     [Route("api/[controller]")]
     [ApiController]
-    [Authorize] // Protegido por Token
+    [Authorize]
     public class PedidosController : ControllerBase
     {
-        private readonly MarketGOContext _context;
+        private readonly IMongoCollection<Direccion> _direccionesCollection;
+        private readonly IMongoCollection<PublicacionInventario> _publicacionesCollection;
+        private readonly IMongoCollection<Pedido> _pedidosCollection;
+        private readonly IMongoCollection<DetallePedido> _detallesCollection;
 
-        public PedidosController(MarketGOContext context)
+        public PedidosController(IMongoDatabase database)
         {
-            _context = context;
+            _direccionesCollection = database.GetCollection<Direccion>("direcciones");
+            _publicacionesCollection = database.GetCollection<PublicacionInventario>("publicaciones_inventarios");
+            _pedidosCollection = database.GetCollection<Pedido>("pedidos");
+            _detallesCollection = database.GetCollection<DetallePedido>("detalles_pedidos");
         }
 
         [HttpPost("checkout")]
         public async Task<IActionResult> Checkout(CheckoutDTO carrito)
         {
-            var userIdString = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
-            if (!int.TryParse(userIdString, out int userIdToken))
-            {
-                return Unauthorized(new { message = "Token inválido." });
-            }
+            var userIdToken = User.FindFirstValue(ClaimTypes.NameIdentifier);
+            if (string.IsNullOrEmpty(userIdToken)) return Unauthorized(new { message = "Token inválido." });
 
-            // 1. Validar que la dirección exista y sea realmente de este usuario
-            var direccionExiste = await _context.Direcciones
-                .AnyAsync(d => d.Id == carrito.DireccionId && d.UsuarioId == userIdToken);
+            var filterDir = Builders<Direccion>.Filter.And(
+                Builders<Direccion>.Filter.Eq(d => d.Id, carrito.DireccionId),
+                Builders<Direccion>.Filter.Eq(d => d.UsuarioId, userIdToken)
+            );
+            var direccionExiste = await _direccionesCollection.Find(filterDir).AnyAsync();
 
-            if (!direccionExiste)
-            {
-                return BadRequest(new { message = "La dirección seleccionada no es válida." });
-            }
-
-            // 2. Iniciamos una transacción segura
-            using var transaction = await _context.Database.BeginTransactionAsync();
+            if (!direccionExiste) return BadRequest(new { message = "La dirección seleccionada no es válida." });
 
             try
             {
-                // Paso A: Crear la cabecera del pedido
                 var nuevoPedido = new Pedido
                 {
                     UsuarioId = userIdToken,
                     DireccionId = carrito.DireccionId,
-                    FechaPedido = DateTime.Now,
+                    FechaPedido = DateTime.UtcNow,
                     Estado = "Pagado",
-                    Total = 0 // Lo calcularemos dinámicamente ahora
+                    TotalPagar = 0
                 };
 
-                _context.Pedidos.Add(nuevoPedido);
-                await _context.SaveChangesAsync(); // Guardamos para que SQL genere el ID del Pedido
-
+                await _pedidosCollection.InsertOneAsync(nuevoPedido);
                 decimal totalCalculado = 0;
 
-                // Paso B: Procesar cada artículo del carrito
                 foreach (var item in carrito.Articulos)
                 {
-                    // Buscamos el producto en el inventario
-                    var publicacion = await _context.Publicaciones_Inventarios.FindAsync(item.PublicacionId);
+                    var publicacion = await _publicacionesCollection.Find(p => p.Id == item.PublicacionId).FirstOrDefaultAsync();
 
-                    if (publicacion == null)
-                        throw new Exception($"El producto no existe.");
+                    if (publicacion == null) return BadRequest(new { message = "Un producto del carrito ya no existe." });
+                    if (publicacion.Stock < item.Cantidad) return BadRequest(new { message = $"No hay stock suficiente para la publicación ID {item.PublicacionId}." });
 
-                    if (publicacion.Stock < item.Cantidad)
-                        throw new Exception($"No hay stock suficiente para un producto en tu carrito.");
-
-                    // Descontamos el stock
-                    publicacion.Stock -= item.Cantidad;
-
-                    // Calculamos el subtotal con el PRECIO REAL de la BD
                     var subtotal = publicacion.Precio * item.Cantidad;
                     totalCalculado += subtotal;
 
-                    // Creamos el detalle histórico
                     var detalle = new DetallePedido
                     {
                         PedidoId = nuevoPedido.Id,
@@ -83,103 +69,67 @@ namespace MarketGO.Controllers
                         Cantidad = item.Cantidad,
                         PrecioUnitario = publicacion.Precio
                     };
+                    await _detallesCollection.InsertOneAsync(detalle);
 
-                    _context.Detalles_Pedido.Add(detalle);
+                    var updateStock = Builders<PublicacionInventario>.Update.Set(p => p.Stock, publicacion.Stock - item.Cantidad);
+                    await _publicacionesCollection.UpdateOneAsync(p => p.Id == publicacion.Id, updateStock);
                 }
 
-                // Paso C: Actualizamos el total del pedido con la suma exacta
-                nuevoPedido.Total = totalCalculado;
-                await _context.SaveChangesAsync();
+                var updatePedido = Builders<Pedido>.Update.Set(p => p.TotalPagar, totalCalculado);
+                await _pedidosCollection.UpdateOneAsync(p => p.Id == nuevoPedido.Id, updatePedido);
 
-                // Paso D: Si todo salió perfecto, confirmamos los cambios en SQL
-                await transaction.CommitAsync();
-
-                return Ok(new
-                {
-                    message = "¡Pedido realizado con éxito!",
-                    pedidoId = nuevoPedido.Id,
-                    totalPagar = totalCalculado
-                });
+                return Ok(new { message = "¡Pedido realizado con éxito!", pedidoId = nuevoPedido.Id, totalPagar = totalCalculado });
             }
             catch (Exception ex)
             {
-                // Si algo falla, se cancela todo automáticamente
-                await transaction.RollbackAsync();
                 return BadRequest(new { message = "Error al procesar la compra", error = ex.Message });
             }
         }
+
         [HttpGet("mis-pedidos")]
         public async Task<IActionResult> GetMisPedidos()
         {
-            var userIdString = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
-            if (!int.TryParse(userIdString, out int userIdToken))
-            {
-                return Unauthorized(new { message = "Token inválido." });
-            }
+            var userIdToken = User.FindFirstValue(ClaimTypes.NameIdentifier);
+            if (string.IsNullOrEmpty(userIdToken)) return Unauthorized();
 
-            // Buscamos los pedidos del usuario, ordenados desde el más reciente al más antiguo
-            var misPedidos = await _context.Pedidos
-                .Include(p => p.Direccion)
-                .Include(p => p.articulos)
-                    .ThenInclude(d => d.Publicacion)
-                    .ThenInclude(pub => pub.ProductoCatalogo)
-                .Where(p => p.UsuarioId == userIdToken)
-                .OrderByDescending(p => p.FechaPedido)
+            var misPedidos = await _pedidosCollection
+                .Find(p => p.UsuarioId == userIdToken)
+                .SortByDescending(p => p.FechaPedido)
                 .ToListAsync();
 
             return Ok(misPedidos);
         }
 
-        // Endpoint PUT: Actualizar el estado del pedido
         [HttpPut("{id}/estado")]
-        public async Task<IActionResult> ActualizarEstado(int id, [FromBody] ActualizarEstadoDTO nuevoEstado)
+        public async Task<IActionResult> ActualizarEstado(string id, [FromBody] ActualizarEstadoDTO nuevoEstado)
         {
-            // 1. Validar que el estado sea uno de los permitidos
             var estadosPermitidos = new[] { "Pendiente", "Pagado", "Enviado", "Entregado" };
-            if (!estadosPermitidos.Contains(nuevoEstado.Estado))
-            {
-                return BadRequest(new { message = "Estado no válido. Use: Pendiente, Pagado, Enviado o Entregado." });
-            }
+            if (!estadosPermitidos.Contains(nuevoEstado.Estado)) return BadRequest(new { message = "Estado no válido." });
 
-            var userIdString = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
-            if (!int.TryParse(userIdString, out int userIdToken))
-                return Unauthorized(new { message = "Token inválido." });
+            var userIdToken = User.FindFirstValue(ClaimTypes.NameIdentifier);
+            if (string.IsNullOrEmpty(userIdToken)) return Unauthorized();
 
             bool esAdmin = User.IsInRole("Admin");
 
             try
             {
-                // 2. Buscar el pedido por su ID
-                var pedido = await _context.Pedidos
-                    .FirstOrDefaultAsync(p => p.Id == id);
+                var pedido = await _pedidosCollection.Find(p => p.Id == id).FirstOrDefaultAsync();
+                if (pedido == null) return NotFound(new { message = "Pedido no encontrado." });
 
-                if (pedido == null)
-                    return NotFound(new { message = "Pedido no encontrado." });
-
-                if (pedido == null)
-                    return NotFound(new { message = "Pedido no encontrado." });
-
-                // 3. Control de Propiedad: Si no es Admin, verificamos si es el dueño de algún producto en este pedido
                 if (!esAdmin)
                 {
-                    // Buscamos manualmente en la tabla de inventario si este usuario es el vendedor de alguno de los items
-                    var esVendedorDelPedido = await _context.Detalles_Pedido
-                        .Where(d => d.PedidoId == id)
-                        .Join(_context.Publicaciones_Inventarios,
-                              detalle => detalle.PublicacionId,
-                              pub => pub.Id,
-                              (detalle, pub) => pub.VendedorId)
-                        .AnyAsync(vendedorId => vendedorId == userIdToken);
+                    var detalles = await _detallesCollection.Find(d => d.PedidoId == id).ToListAsync();
+                    var publicacionIds = detalles.Select(d => d.PublicacionId).ToList();
+                    var publicaciones = await _publicacionesCollection.Find(Builders<PublicacionInventario>.Filter.In(p => p.Id, publicacionIds)).ToListAsync();
 
-                    if (!esVendedorDelPedido)
+                    if (!publicaciones.Any(p => p.VendedorId == userIdToken))
                     {
-                        return StatusCode(403, new { message = "No tienes permiso para actualizar un pedido que no contiene tus productos." });
+                        return StatusCode(403, new { message = "No tienes permiso para actualizar este pedido." });
                     }
                 }
 
-                // 4. Actualizamos y guardamos
-                pedido.Estado = nuevoEstado.Estado;
-                await _context.SaveChangesAsync();
+                var update = Builders<Pedido>.Update.Set(p => p.Estado, nuevoEstado.Estado);
+                await _pedidosCollection.UpdateOneAsync(p => p.Id == id, update);
 
                 return Ok(new { message = $"El estado del pedido ha sido actualizado a '{nuevoEstado.Estado}'." });
             }

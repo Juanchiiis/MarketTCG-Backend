@@ -1,7 +1,7 @@
 ﻿using MarketGO.Models;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.EntityFrameworkCore;
+using MongoDB.Driver;
 using System.Security.Claims;
 
 namespace MarketGO.Controllers
@@ -11,49 +11,43 @@ namespace MarketGO.Controllers
     [Authorize]
     public class DireccionesController : ControllerBase
     {
-        private readonly MarketGOContext _context;
+        private readonly IMongoCollection<Direccion> _direccionesCollection;
 
-        public DireccionesController(MarketGOContext context)
+        public DireccionesController(IMongoDatabase database)
         {
-            _context = context;
+            _direccionesCollection = database.GetCollection<Direccion>("direcciones");
         }
 
-        // GET: /api/Direcciones/mis-direcciones
         [HttpGet("mis-direcciones")]
         public async Task<IActionResult> GetMisDirecciones()
         {
-            var userIdString = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
-            if (!int.TryParse(userIdString, out int userIdToken)) return Unauthorized();
+            var userIdToken = User.FindFirstValue(ClaimTypes.NameIdentifier);
+            if (string.IsNullOrEmpty(userIdToken)) return Unauthorized();
 
-            var misDirecciones = await _context.Direcciones
-                .Where(d => d.UsuarioId == userIdToken)
-                .ToListAsync();
-
+            var misDirecciones = await _direccionesCollection.Find(d => d.UsuarioId == userIdToken).ToListAsync();
             return Ok(misDirecciones);
         }
 
-        // POST: /api/Direcciones
         [HttpPost]
         public async Task<IActionResult> CrearDireccion(DireccionDTO nuevaDireccion)
         {
-            var userIdString = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
-            if (!int.TryParse(userIdString, out int userIdToken)) return Unauthorized();
+            var userIdToken = User.FindFirstValue(ClaimTypes.NameIdentifier);
+            if (string.IsNullOrEmpty(userIdToken)) return Unauthorized();
 
             try
             {
-                bool tieneDirecciones = await _context.Direcciones.AnyAsync(d => d.UsuarioId == userIdToken);
+                bool tieneDirecciones = await _direccionesCollection.Find(d => d.UsuarioId == userIdToken).AnyAsync();
 
-                // Si se marca como predeterminada, quitamos esa marca a las demás
-                if (nuevaDireccion.EsPredeterminada)
+                if (nuevaDireccion.EsPredeterminada && tieneDirecciones)
                 {
-                    var direccionesExistentes = await _context.Direcciones.Where(d => d.UsuarioId == userIdToken).ToListAsync();
-                    foreach (var d in direccionesExistentes) d.EsPredeterminada = false;
+                    var update = Builders<Direccion>.Update.Set(d => d.EsPredeterminada, false);
+                    await _direccionesCollection.UpdateManyAsync(d => d.UsuarioId == userIdToken, update);
                 }
 
                 var direccionBD = new Direccion
                 {
                     UsuarioId = userIdToken,
-                    Label = nuevaDireccion.Label ?? "Casa", // <-- Usamos el Label (Etiqueta) que viene del frontend
+                    Label = nuevaDireccion.Label ?? "Casa",
                     Region = nuevaDireccion.Region,
                     Comuna = nuevaDireccion.Comuna,
                     Calle = nuevaDireccion.Calle,
@@ -63,9 +57,7 @@ namespace MarketGO.Controllers
                     EsPredeterminada = nuevaDireccion.EsPredeterminada || !tieneDirecciones
                 };
 
-                _context.Direcciones.Add(direccionBD);
-                await _context.SaveChangesAsync();
-
+                await _direccionesCollection.InsertOneAsync(direccionBD);
                 return Ok(new { message = "Dirección guardada", id = direccionBD.Id });
             }
             catch (Exception ex)
@@ -74,36 +66,40 @@ namespace MarketGO.Controllers
             }
         }
 
-        // PUT: /api/Direcciones/{id}
         [HttpPut("{id}")]
-        public async Task<IActionResult> EditarDireccion(int id, DireccionDTO direccionEditada)
+        public async Task<IActionResult> EditarDireccion(string id, DireccionDTO direccionEditada)
         {
-            var userIdString = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
-            if (!int.TryParse(userIdString, out int userIdToken)) return Unauthorized();
+            var userIdToken = User.FindFirstValue(ClaimTypes.NameIdentifier);
+            if (string.IsNullOrEmpty(userIdToken)) return Unauthorized();
 
-            var direccionBD = await _context.Direcciones.FindAsync(id);
+            var direccionBD = await _direccionesCollection.Find(d => d.Id == id).FirstOrDefaultAsync();
 
             if (direccionBD == null) return NotFound(new { message = "Dirección no encontrada." });
-            if (direccionBD.UsuarioId != userIdToken) return StatusCode(403, new { message = "No tienes permiso para editar esta dirección." });
+            if (direccionBD.UsuarioId != userIdToken) return StatusCode(403, new { message = "Acceso denegado." });
 
             try
             {
                 if (direccionEditada.EsPredeterminada)
                 {
-                    var otrasDirecciones = await _context.Direcciones.Where(d => d.UsuarioId == userIdToken && d.Id != id).ToListAsync();
-                    foreach (var d in otrasDirecciones) d.EsPredeterminada = false;
+                    var filterOtras = Builders<Direccion>.Filter.And(
+                        Builders<Direccion>.Filter.Eq(d => d.UsuarioId, userIdToken),
+                        Builders<Direccion>.Filter.Ne(d => d.Id, id)
+                    );
+                    var updateOtras = Builders<Direccion>.Update.Set(d => d.EsPredeterminada, false);
+                    await _direccionesCollection.UpdateManyAsync(filterOtras, updateOtras);
                 }
 
-                direccionBD.Label = direccionEditada.Label;
-                direccionBD.Region = direccionEditada.Region;
-                direccionBD.Comuna = direccionEditada.Comuna;
-                direccionBD.Calle = direccionEditada.Calle;
-                direccionBD.Numero = direccionEditada.Numero ?? "";
-                direccionBD.Departamento = direccionEditada.Departamento ?? "";
-                direccionBD.CodigoPostal = direccionEditada.CodigoPostal ?? "";
-                direccionBD.EsPredeterminada = direccionEditada.EsPredeterminada;
+                var update = Builders<Direccion>.Update
+                    .Set(d => d.Label, direccionEditada.Label)
+                    .Set(d => d.Region, direccionEditada.Region)
+                    .Set(d => d.Comuna, direccionEditada.Comuna)
+                    .Set(d => d.Calle, direccionEditada.Calle)
+                    .Set(d => d.Numero, direccionEditada.Numero ?? "")
+                    .Set(d => d.Departamento, direccionEditada.Departamento ?? "")
+                    .Set(d => d.CodigoPostal, direccionEditada.CodigoPostal ?? "")
+                    .Set(d => d.EsPredeterminada, direccionEditada.EsPredeterminada);
 
-                await _context.SaveChangesAsync();
+                await _direccionesCollection.UpdateOneAsync(d => d.Id == id, update);
                 return Ok(new { message = "Dirección actualizada con éxito" });
             }
             catch (Exception ex)
@@ -112,28 +108,20 @@ namespace MarketGO.Controllers
             }
         }
 
-        // DELETE: /api/Direcciones/{id}
         [HttpDelete("{id}")]
-        public async Task<IActionResult> EliminarDireccion(int id)
+        public async Task<IActionResult> EliminarDireccion(string id)
+
         {
-            var userIdString = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
-            if (!int.TryParse(userIdString, out int userIdToken)) return Unauthorized();
+            if (id.Length != 24) return BadRequest(new { message = "ID inválido." });
+            var userIdToken = User.FindFirstValue(ClaimTypes.NameIdentifier);
+            if (string.IsNullOrEmpty(userIdToken)) return Unauthorized();
 
-            var direccionBD = await _context.Direcciones.FindAsync(id);
-
+            var direccionBD = await _direccionesCollection.Find(d => d.Id == id).FirstOrDefaultAsync();
             if (direccionBD == null) return NotFound();
             if (direccionBD.UsuarioId != userIdToken) return StatusCode(403);
 
-            try
-            {
-                _context.Direcciones.Remove(direccionBD);
-                await _context.SaveChangesAsync();
-                return Ok(new { message = "Dirección eliminada correctamente" });
-            }
-            catch (Exception ex)
-            {
-                return BadRequest(new { message = "Error al eliminar", error = ex.Message });
-            }
+            await _direccionesCollection.DeleteOneAsync(d => d.Id == id);
+            return Ok(new { message = "Dirección eliminada correctamente" });
         }
     }
 }

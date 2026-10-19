@@ -2,9 +2,9 @@
 {
     public class PublicacionInventarioDTO
     {
-        public int Id { get; set; }
-        public int ProductoCatalogoId { get; set; }
-        public int ColeccionId { get; set; }
+        public string Id { get; set; } = string.Empty;
+        public string ProductoCatalogoId { get; set; } = string.Empty;
+        public string ColeccionId { get; set; } = string.Empty;
         public string SKU { get; set; }
         public string TipoProducto { get; set; }
         public string NombreProducto { get; set; } = string.Empty;

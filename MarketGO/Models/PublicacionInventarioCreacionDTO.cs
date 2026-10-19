@@ -5,8 +5,7 @@ namespace MarketGO.Models
     public class PublicacionInventarioCreacionDTO
     {
         [Required(ErrorMessage = "El campo de producto no puede quedar vacio ")]
-        [Range(1, int.MaxValue, ErrorMessage = "ProductoCatalogoId debe ser mayor a 0")]
-        public int ProductoCatalogoId { get; set; }
+        public string ProductoCatalogoId { get; set; } = string.Empty;
 
         [Required(ErrorMessage = "El campo de estado no puede quedar vacio ")]
         [StringLength(50, ErrorMessage = "Estado no puede exceder 50 caracteres")]

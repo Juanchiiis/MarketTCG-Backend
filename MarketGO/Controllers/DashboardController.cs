@@ -1,20 +1,26 @@
 ﻿using MarketGO.Models;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.EntityFrameworkCore;
+using MongoDB.Driver;
 
 namespace MarketGO.Controllers
 {
     [Route("api/[controller]")]
     [ApiController]
-    [Authorize(Roles = "Admin")] // 🔒 SEGURIDAD ABSOLUTA: Solo Administradores
+    [Authorize(Roles = "Admin")]
     public class DashboardController : ControllerBase
     {
-        private readonly MarketGOContext _context;
+        private readonly IMongoCollection<Usuarios> _usuariosCollection;
+        private readonly IMongoCollection<Pedido> _pedidosCollection;
+        private readonly IMongoCollection<PublicacionInventario> _publicacionesCollection;
+        private readonly IMongoCollection<CatalogoProducto> _productosCollection;
 
-        public DashboardController(MarketGOContext context)
+        public DashboardController(IMongoDatabase database)
         {
-            _context = context;
+            _usuariosCollection = database.GetCollection<Usuarios>("usuarios");
+            _pedidosCollection = database.GetCollection<Pedido>("pedidos");
+            _publicacionesCollection = database.GetCollection<PublicacionInventario>("publicaciones_inventarios");
+            _productosCollection = database.GetCollection<CatalogoProducto>("catalogo_productos");
         }
 
         // Endpoint GET: Métricas Generales (Ventas, Usuarios, Pedidos)
@@ -23,18 +29,17 @@ namespace MarketGO.Controllers
         {
             try
             {
-                // 1. Total de usuarios registrados
-                int totalUsuarios = await _context.Usuarios.CountAsync();
+                int totalUsuarios = (int)await _usuariosCollection.CountDocumentsAsync(Builders<Usuarios>.Filter.Empty);
 
-                // 2. Total de pedidos exitosos (Excluimos los que estén "Pendientes" de pago si los hubiera)
-                int totalPedidos = await _context.Pedidos
-                    .Where(p => p.Estado != "Pendiente")
-                    .CountAsync();
+                var filterPedidos = Builders<Pedido>.Filter.Ne(p => p.Estado, "Pendiente");
+                int totalPedidos = (int)await _pedidosCollection.CountDocumentsAsync(filterPedidos);
 
-                // 3. Suma total de dinero movido en la plataforma
-                decimal ingresosTotales = await _context.Pedidos
-                    .Where(p => p.Estado != "Pendiente")
-                    .SumAsync(p => p.Total);
+                var pedidosCompletados = await _pedidosCollection
+                    .Find(filterPedidos)
+                    .Project(p => p.TotalPagar)
+                    .ToListAsync();
+
+                decimal ingresosTotales = pedidosCompletados.Sum();
 
                 return Ok(new
                 {
@@ -55,18 +60,21 @@ namespace MarketGO.Controllers
         {
             try
             {
-                // Buscamos publicaciones con 0 stock y hacemos un JOIN rápido para saber cómo se llama el producto
-                var productosSinStock = await (from publicacion in _context.Publicaciones_Inventarios
-                                               join producto in _context.Catalogo_Productos
-                                               on publicacion.ProductoCatalogoId equals producto.Id
-                                               where publicacion.Stock == 0
-                                               select new
-                                               {
-                                                   PublicacionId = publicacion.Id,
-                                                   NombreProducto = producto.NombreProducto,
-                                                   SKU = producto.SKU,
-                                                   VendedorId = publicacion.VendedorId
-                                               }).ToListAsync();
+                var filterStock = Builders<PublicacionInventario>.Filter.Eq(p => p.Stock, 0);
+                var publicacionesSinStock = await _publicacionesCollection.Find(filterStock).ToListAsync();
+                var productos = await _productosCollection.Find(Builders<CatalogoProducto>.Filter.Empty).ToListAsync();
+
+                var productosSinStock = publicacionesSinStock.Select(pub =>
+                {
+                    var producto = productos.FirstOrDefault(p => p.Id == pub.ProductoCatalogoId);
+                    return new
+                    {
+                        PublicacionId = pub.Id,
+                        NombreProducto = producto?.NombreProducto ?? "Desconocido",
+                        SKU = producto?.SKU ?? "N/A",
+                        VendedorId = pub.VendedorId
+                    };
+                }).ToList();
 
                 return Ok(new
                 {
